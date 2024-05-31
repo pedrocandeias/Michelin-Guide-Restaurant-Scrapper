@@ -1,9 +1,26 @@
 <?php
 session_start();
 
-if (isset($_SESSION['downloadLink'])) {
-    $filePath = $_SESSION['downloadLink'];
-    if (file_exists($filePath)) {
+if (isset($_GET['type'])) {
+    $type = $_GET['type'];
+    $filePath = '';
+
+    switch ($type) {
+        case 'xml':
+            $filePath = $_SESSION['xmlDownloadLink'] ?? '';
+            break;
+        case 'kml':
+            $filePath = $_SESSION['kmlDownloadLink'] ?? '';
+            break;
+        case 'kmz':
+            $filePath = $_SESSION['kmzDownloadLink'] ?? '';
+            break;
+        default:
+            echo "Invalid file type.";
+            exit;
+    }
+
+    if ($filePath && file_exists($filePath)) {
         header('Content-Description: File Transfer');
         header('Content-Type: application/octet-stream');
         header('Content-Disposition: attachment; filename="' . basename($filePath) . '"');

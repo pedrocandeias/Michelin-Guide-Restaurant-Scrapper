@@ -2,6 +2,7 @@
 session_start();
 ini_set('display_errors', 1);
 error_reporting(E_ALL);
+
 function fetchUrl($url)
 {
     $ch = curl_init();
@@ -25,13 +26,13 @@ function fetchUrl($url)
 }
 
 function findNumberOfPages($html)
-{ 
+{
     $dom = new DOMDocument();
     @$dom->loadHTML($html);
     $xpath = new DOMXPath($dom);
     $paginationNodes = $xpath->query("//div[contains(@class, 'js-restaurant__bottom-pagination')]//a[contains(@class, 'btn-outline-secondary')]");
 
-    if ($paginationNodes->length == 0) { 
+    if ($paginationNodes->length == 0) {
         return 1; // No pagination found, assume only one page
     }
 
@@ -74,10 +75,8 @@ function parseRestaurants($html)
             'details' => $details
         ];
     }
-    // var_dump($data);
     return $data;
 }
-
 
 function scrapeAllPages($baseUrl)
 {
@@ -114,6 +113,10 @@ function fetchRestaurantDetails($url)
     $timetableNode = $xpath->query("//div[@class='open__time']");
     $timetable = $timetableNode->length > 0 ? trim($timetableNode->item(0)->nodeValue) : "No timetable available";
 
+    // Fetch price
+    $priceNode = $xpath->query("//li[@class='restaurant-details__heading-price']");
+    $price = $priceNode->length > 0 ? trim($priceNode->item(0)->nodeValue) : "No price available";
+
     // Fetch GPS coordinates
     $gpsLinkNode = $xpath->query("//div[@class='restaurant-details__button--mobile']/a[contains(@href, 'lat')]");
     $gpsLink = $gpsLinkNode->length > 0 ? $gpsLinkNode->item(0)->getAttribute('href') : "";
@@ -126,24 +129,21 @@ function fetchRestaurantDetails($url)
 
     // Fetch images from each 'masthead__gallery-image-item' within 'masthead__gallery-image'
     $imageNodes = $xpath->query("//div[contains(@class, 'masthead__gallery-image-item')]/img");
-    //print_r($imageNodes[0]->attributes[0]->value);
     $images = [];
     foreach ($imageNodes as $node) {
-        // The image URL might be in a data attribute or a style, depending on how it's structured
         $style = $node->attributes[0]->value;
-           $images[] = $style; // Directly take the URL if not in a style format
-       
+        $images[] = $style; // Directly take the URL if not in a style format
     }
-    
-    //print_r($images[0]);
+
     $restimage1 = isset($images[0]) ? $images[0] : "No image available";
     $restimage2 = isset($images[1]) ? $images[1] : "No image available";
-    $restimage3 = isset($images[2]) ? $images[2] : "No image available";    
+    $restimage3 = isset($images[2]) ? $images[2] : "No image available";
 
     return [
         'description' => $description,
         'address' => $address,
         'timetable' => $timetable,
+        'price' => $price,
         'latitude' => $lat,
         'longitude' => $lon,
         'image1' => $restimage1,
@@ -152,7 +152,7 @@ function fetchRestaurantDetails($url)
     ];
 }
 
-function updateProgress($current, $total) 
+function updateProgress($current, $total)
 {
     if ($total > 0) {
         $_SESSION['progress'] = intval(($current / $total) * 100);
@@ -161,14 +161,13 @@ function updateProgress($current, $total)
     }
 }
 
-function getProgress() 
+function getProgress()
 {
     return $_SESSION['progress'] ?? 0;
 }
 
 function displayXML($restaurants, $returnAsString = false)
 {
-    //header('Content-type: text/xml');
     $xml = new SimpleXMLElement('<restaurants/>');
     foreach ($restaurants as $restaurant) {
         $xmlRestaurant = $xml->addChild('restaurant');
@@ -182,8 +181,7 @@ function displayXML($restaurants, $returnAsString = false)
         $xmlRestaurant->addChild('image1', htmlspecialchars($restaurant['details']['image1']));
         $xmlRestaurant->addChild('image2', htmlspecialchars($restaurant['details']['image2']));
         $xmlRestaurant->addChild('image3', htmlspecialchars($restaurant['details']['image3']));
-
-    }  
+    }
     if ($returnAsString) {
         return $xml->asXML(); // Return XML string
     } else {
@@ -191,8 +189,73 @@ function displayXML($restaurants, $returnAsString = false)
         echo $xml->asXML(); // Output directly
     }
 }
+function generateKML($restaurants)
+{
+    $kml = new SimpleXMLElement('<kml/>');
+    $kml->addAttribute('xmlns', 'http://www.opengis.net/kml/2.2');
+    $document = $kml->addChild('Document');
 
-// $url = "https://guide.michelin.com/tw/en/selection/taiwan/restaurants/bib-gourmand/affordable";
+    // Define the custom icon style
+    $style = $document->addChild('Style');
+    $style->addAttribute('id', 'customIconStyle');
+    $iconStyle = $style->addChild('IconStyle');
+    $icon = $iconStyle->addChild('Icon');
+    $icon->addChild('href', 'http://maps.google.com/mapfiles/kml/paddle/red-circle.png'); // URL to your custom icon
+
+    foreach ($restaurants as $restaurant) {
+        $placemark = $document->addChild('Placemark');
+        $placemark->addChild('name', htmlspecialchars($restaurant['name']));
+        
+        // Apply the custom icon style to the placemark
+        $placemark->addChild('styleUrl', '#customIconStyle');
+        
+        // Creating a rich description with images, address, and price
+        $descriptionContent = '<![CDATA[';
+        $descriptionContent .= '<p><bold>Address:</bold> ' . htmlspecialchars($restaurant['details']['address']) . '</p>';
+        $descriptionContent .= '<p></p>';
+        $descriptionContent .= '<p>' . htmlspecialchars($restaurant['details']['description']) . '<br></p>';
+        $descriptionContent .= '<p><strong>Timetable:</strong> ' . htmlspecialchars($restaurant['details']['timetable']) . '</p>';
+        if (isset($restaurant['details']['price']) && $restaurant['details']['price'] != "No price available") {
+            $descriptionContent .= '<p><strong>Price:</strong> ' . htmlspecialchars($restaurant['details']['price']) . '</p>';
+        }
+        
+        // Add images if available
+        if ($restaurant['details']['image1'] != "No image available") {
+            $descriptionContent .= '<p>' . htmlspecialchars($restaurant['details']['image1']) . '</p>';
+        }
+        if ($restaurant['details']['image1'] != "No image available") {
+            $descriptionContent .= '<description><![CDATA[<img src="' . htmlspecialchars($restaurant['details']['image1']) . '" height="200" width="auto" />]]>' . '</description>';
+        }
+        if ($restaurant['details']['image2'] != "No image available") {
+            $descriptionContent .= '<p>' . htmlspecialchars($restaurant['details']['image2']) . '</p>';
+        }
+        if ($restaurant['details']['image3'] != "No image available") {
+            $descriptionContent .= '<p>' . htmlspecialchars($restaurant['details']['image3']) . '</p>';
+        }
+
+        
+        $placemark->addChild('description', $descriptionContent);
+        $point = $placemark->addChild('Point');
+        $coordinates = htmlspecialchars($restaurant['details']['longitude'] . ',' . $restaurant['details']['latitude']);
+        $point->addChild('coordinates', $coordinates);
+    }
+
+    return $kml->asXML();
+}
+
+function generateKMZ($kmlContent, $filename)
+{
+    $zip = new ZipArchive();
+    $kmzFile = '/tmp/' . $filename;
+
+    if ($zip->open($kmzFile, ZipArchive::CREATE) === TRUE) {
+        $zip->addFromString('doc.kml', $kmlContent);
+        $zip->close();
+        return $kmzFile;
+    } else {
+        return false;
+    }
+}
 
 if ($_SERVER["REQUEST_METHOD"] == "POST" && !empty($_POST['url'])) {
     $url = filter_var($_POST['url'], FILTER_SANITIZE_URL);
@@ -213,22 +276,33 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !empty($_POST['url'])) {
             $allRestaurants = array_merge($allRestaurants, $restaurants);
         }
         sleep(1); // Throttling by slowing down the loop.
-    } 
+    }
     if (!$allRestaurants) {
         echo "No restaurants found";
     } else {
         $xmlContent = displayXML($allRestaurants, true); // Generate XML and return as string
-        $filename = "restaurants_" . time() . ".xml"; // Unique filename for each session
-        $filePath = "/tmp/" . $filename; // Make sure the directory exists and is writable
-        file_put_contents($filePath, $xmlContent); // Save to file
-        $_SESSION['downloadLink'] = $filePath;
+        $filename = "restaurants_" . time();
+        $xmlFilePath = "/tmp/" . $filename . ".xml"; // Unique filename for each session
+        file_put_contents($xmlFilePath, $xmlContent); // Save to file
+
+        // Generate KML
+        $kmlContent = generateKML($allRestaurants);
+        $kmlFilePath = "/tmp/" . $filename . ".kml";
+        file_put_contents($kmlFilePath, $kmlContent);
+
+        // Generate KMZ
+        $kmzFilePath = generateKMZ($kmlContent, $filename . ".kmz");
+
+        $_SESSION['xmlDownloadLink'] = $xmlFilePath;
+        $_SESSION['kmlDownloadLink'] = $kmlFilePath;
+        $_SESSION['kmzDownloadLink'] = $kmzFilePath;
     }
 
 } elseif (isset($_GET['progress'])) {
     echo getProgress();
     exit;
 }
-    ?>
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -239,19 +313,13 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !empty($_POST['url'])) {
 </head>
 <body>
     <h1>Michelin Guide Restaurant Scraper</h1>
-    
-    
     <form method="post">
-        <label for="url">Enter Michelin Guide URL:</label> <?php
-
-?>
-
+        <label for="url">Enter Michelin Guide URL:</label>
         <input type="text" id="url" name="url" required>
         <button type="submit">Scrape</button>
     </form>
     <script>
 document.addEventListener("DOMContentLoaded", function() {
-   
     const form = document.querySelector("form");
     form.addEventListener("submit", function(event) {
         document.getElementById("result").innerHTML = " ";
@@ -265,11 +333,9 @@ document.addEventListener("DOMContentLoaded", function() {
             console.log(data);
               console.log("Scraping complete");
               console.log(data); // Log the response data to console
-                //document.getElementById("result").innerHTML = data; // Set innerHTML to render the link
-                document.getElementById("result").innerHTML = "Scraping complete. <a href='download.php'>Download XML</a>";
+              document.getElementById("result").innerHTML = "Scraping complete. <a href='download.php?type=xml'>Download XML</a> | <a href='download.php?type=kml'>Download KML</a> | <a href='download.php?type=kmz'>Download KMZ</a>";
           });
 
-        // Function to update progress
         function updateProgress() {
             document.getElementById('progress').textContent = "Processing..."; // Initial message
             fetch('?progress')
@@ -288,6 +354,5 @@ document.addEventListener("DOMContentLoaded", function() {
 </script>
 <div id="progress"></div>
 <div id="result"></div>
-
 </body>
 </html>
